@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Signing in… — ZiyoAI</title>
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0b0d;color:#e4e4e7;font:15px system-ui,Segoe UI,Roboto,sans-serif}
+  .box{text-align:center;padding:32px}
+  .spin{width:34px;height:34px;margin:0 auto 18px;border:3px solid rgba(255,255,255,.18);border-top-color:#fff;border-radius:50%;animation:s .8s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .err{color:#f87171;max-width:420px;line-height:1.5}
+  button{margin-top:14px;padding:9px 18px;border:1px solid #3f3f46;border-radius:9px;background:#18181b;color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="spin" id="spin"></div>
+  <div id="msg">Signing you in with Google…</div>
+</div>
+<script>
+(async function(){
+  const params = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+  const id_token = params.get('id_token');
+  const state = params.get('state');
+  const msg = document.getElementById('msg');
+  if(params.get('error')){
+    document.getElementById('spin').style.display = 'none';
+    msg.className = 'err';
+    msg.textContent = 'Google sign-in was cancelled or failed: ' + params.get('error');
+    return;
+  }
+  if(!id_token){
+    location.replace('/?auth_error=' + encodeURIComponent('No Google ID token received') + '#/chat');
+    return;
+  }
+  try{
+    const res = await fetch('/api/auth/google/token', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: id_token, state: state })
+    });
+    const j = await res.json();
+    if(!res.ok || !j.ok) throw new Error(j.error || ('HTTP ' + res.status));
+    location.replace(j.redirect || '/?auth_ok=google#/chat');
+  }catch(e){
+    document.getElementById('spin').style.display = 'none';
+    msg.className = 'err';
+    msg.textContent = 'Could not sign in: ' + (e.message || e);
+    const b = document.createElement('button');
+    b.textContent = 'Back to ZiyoAI';
+    b.onclick = () => location.replace('/#/chat');
+    document.body.appendChild(b);
+  }
+})();
+</script>
+</body>
+</html>

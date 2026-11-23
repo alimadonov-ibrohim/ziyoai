@@ -5,7 +5,8 @@
   "description": "ZiyoAI — single-file frontend + zero-dependency Gemini backend",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "sync:public": "node -e \"const fs=require('fs');for(const f of ['ziyoai.html','google-callback.html'])fs.copyFileSync(f,'public/'+f)\""
   },
   "engines": {
     "node": ">=18"
