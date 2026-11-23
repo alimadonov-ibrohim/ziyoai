@@ -292,7 +292,8 @@ async function handleRequest(req, res) {
   }
 }
 
-module.exports = { handleRequest };
+module.exports = handleRequest;
+module.exports.handleRequest = handleRequest;
 
 if (require.main === module) {
   const server = http.createServer((req, res) => { handleRequest(req, res); });
