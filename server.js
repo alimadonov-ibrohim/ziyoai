@@ -228,9 +228,15 @@ async function handleChat(req, res) {
 
 /* ---------- static files ---------- */
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
-function serveStatic(pathname, res) {
+
+function serveStatic(pathname, res, search) {
   let rel = decodeURIComponent(pathname);
-  if (rel === '/' || rel === '/index.html') rel = '/ziyoai.html';
+  // Vercel serves /ziyoai.html as a static file but does not resolve `/` to
+  // index.html for a Node root entrypoint. Redirect so the static file is used.
+  if (rel === '/' || rel === '/index.html') {
+    res.writeHead(302, { Location: '/ziyoai.html' + (search || ''), 'Cache-Control': 'no-cache' });
+    return res.end();
+  }
   const file = path.join(ROOT, path.normalize(rel).replace(/^([\\/])+/, ''));
   if (!file.startsWith(ROOT)) return upstreamError(res, 403, 'Forbidden');
   fs.readFile(file, (err, data) => {
@@ -285,7 +291,7 @@ async function handleRequest(req, res) {
     }
     if (p.startsWith('/api/')) return upstreamError(res, 404, 'Unknown API endpoint');
     if (req.method !== 'GET' && req.method !== 'HEAD') return upstreamError(res, 405, 'Method not allowed');
-    return serveStatic(p, res);
+    return serveStatic(p, res, url.search);
   } catch (e) {
     if (!res.headersSent) upstreamError(res, 500, e.message || 'Internal error');
     else res.end();
