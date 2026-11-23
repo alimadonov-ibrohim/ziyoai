@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "sync:public": "node -e \"const fs=require('fs');for(const f of ['ziyoai.html','google-callback.html'])fs.copyFileSync(f,'public/'+f)\""
+    "sync:public": "node -e \"const fs=require('fs');fs.copyFileSync('ziyoai.html','public/index.html');fs.copyFileSync('ziyoai.html','public/ziyoai.html');fs.copyFileSync('google-callback.html','public/google-callback.html')\""
   },
   "engines": {
     "node": ">=18"

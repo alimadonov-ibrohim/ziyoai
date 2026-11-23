@@ -28,9 +28,9 @@ Keyin brauzerda: **http://localhost:3000**
 > kalitni Sozlamalar → API Keys ichiga qo'lishingiz kerak bo'ladi.
 > Haqiqiy backend uchun faqat `http://localhost:3000` manzilini ishlating.
 
-> **Vercel uchun:** statik fayllar `public/` papkasidan olinadi. `ziyoai.html` yoki
-> `google-callback.html` ni o'zgartirgandan keyin `npm run sync:public` bajaring
-> (yoki ularni qo'lda `public/` ga nusxalang), keyin commit qiling.
+> **Vercel uchun:** statik fayllar `public/` papkasidan olinadi (`index.html` = asosiy sahifa).
+> `ziyoai.html` yoki `google-callback.html` ni o'zgartirgandan keyin
+> `npm run sync:public` bajaring, keyin commit qiling.
 
 ## 4. Nima qiladi
 - `GET /api/health` — server va kalit holati.
