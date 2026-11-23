@@ -1,0 +1,5 @@
+.env
+.auth-secret
+data/
+node_modules/
+*.log
