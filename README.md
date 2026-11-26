@@ -82,14 +82,26 @@ avtomatik ravishda yuklanadi va nomlari bilan model tanlagichda chiqadi.
 | GitHub | `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` kerak |
 | Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_BOT_USERNAME` kerak |
 
-Hisoblar `data/users.json` da saqlanadi (parol hech qachon ochiq holda yozilmaydi).
-Sessiya imzosi `.auth-secret` da avtomatik yaratiladi. Ikkalasi ham `.gitignore` da.
+Hisoblar doimiy saqlanadi (parol hech qachon ochiq holda yozilmaydi):
+
+| Muhit | Saqlash |
+|---|---|
+| `DATABASE_URL` berilsa | PostgreSQL (`ziyo_users` jadvali avtomatik yaratiladi) |
+| `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` berilsa | Upstash Redis REST |
+| Hech biri berilmasa | `data/users.json` (mahalliy), Vercel'da `/tmp` — **vaqtinchalik** |
+
+> **Vercel uchun muhim:** serverless muhitda fayl tizimidan foydalanib bo'lmaydi.
+> Shuning uchun `DATABASE_URL` yoki Upstash kalitlarini **Production/Preview**
+> environment'larga qo'ying. Qaysi saqlash ishlayotganini `/api/health` va
+> `/api/auth/config` javobidagi `userStorage` maydoni ko'rsatadi.
+> Sessiya imzosi `.auth-secret` da (lokal) yoki `AUTH_SECRET` env'da (Vercel) saqlanadi.
 
 **Google sozlash:** [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials)
 da *OAuth client ID* (Web application) yarating va **Authorized redirect URIs** ga qo'shing:
 
 ```
 http://localhost:3000/google-callback.html
+https://ziyoai-silk.vercel.app/google-callback.html
 ```
 
 `.env` ga faqat `GOOGLE_CLIENT_ID` yoziladi (Client Secret kerak emas — ID token

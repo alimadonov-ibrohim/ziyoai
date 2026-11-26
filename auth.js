@@ -11,20 +11,22 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { createStore } = require('./store');
 
 const ROOT = __dirname;
-// Vercel's filesystem is read-only except /tmp. Set AUTH_SECRET there so
-// sessions stay valid across cold starts; user records live in /tmp.
+// Vercel's filesystem is read-only except /tmp. Set AUTH_SECRET in the
+// environment so sessions stay valid across cold starts.
 const ON_VERCEL = !!process.env.VERCEL;
-const DATA_DIR = ON_VERCEL ? path.join(os.tmpdir(), 'ziyoai-data') : path.join(ROOT, 'data');
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SECRET_FILE = ON_VERCEL ? path.join(os.tmpdir(), 'ziyoai-auth-secret') : path.join(ROOT, '.auth-secret');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60; // 30 days
 
 function createAuth(env) {
   const PORT = Number(env.PORT || 3000);
-  const BASE_URL = String(env.PUBLIC_URL || env.BASE_URL || ('http://localhost:' + PORT)).replace(/\/+$/, '');
+  const BASE_URL = String(
+    env.PUBLIC_URL || env.BASE_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : null) || ('http://localhost:' + PORT)
+  ).replace(/\/+$/, '');
+  const store = createStore(env);
 
   let secret = String(env.AUTH_SECRET || '').trim();
   if (!secret) {
@@ -33,7 +35,7 @@ function createAuth(env) {
   if (!secret) {
     secret = crypto.randomBytes(32).toString('hex');
     try {
-      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.mkdirSync(path.dirname(SECRET_FILE), { recursive: true });
       fs.writeFileSync(SECRET_FILE, secret, { mode: 0o600 });
     } catch (_) {}
     if (ON_VERCEL) {
@@ -56,32 +58,22 @@ function createAuth(env) {
     },
   };
 
-  /* ---------- storage ---------- */
-  function loadUsers() {
-    try {
-      const j = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-      return Array.isArray(j) ? j : [];
-    } catch (_) { return []; }
-  }
-  function saveUsers(list) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(USERS_FILE, JSON.stringify(list, null, 2), { mode: 0o600 });
-  }
+  /* ---------- storage (Postgres / Upstash / local file) ---------- */
   function publicUser(u) {
     return { email: u.email, name: u.name || u.email.split('@')[0], provider: u.provider || 'password' };
   }
-  function upsert(profile) {
-    const list = loadUsers();
-    let u = list.find(x => x.email === profile.email);
-    if (!u) {
-      u = Object.assign({ createdAt: Date.now() }, profile);
-      list.push(u);
-    } else {
-      u.name = profile.name || u.name;
-      u.provider = profile.provider || u.provider;
-      u.providerId = profile.providerId || u.providerId;
-    }
-    saveUsers(list);
+  async function upsert(profile) {
+    const prev = await store.getUser(profile.email);
+    const u = Object.assign({}, prev || { createdAt: Date.now() }, {
+      email: profile.email,
+      name: profile.name || (prev && prev.name) || profile.email.split('@')[0],
+      provider: profile.provider || (prev && prev.provider) || 'password',
+      providerId: profile.providerId || (prev && prev.providerId),
+      // Never erase a password when the same email signs in through OAuth.
+      salt: (prev && prev.salt) || undefined,
+      hash: (prev && prev.hash) || undefined,
+    });
+    await store.putUser(u);
     return publicUser(u);
   }
 
@@ -115,10 +107,10 @@ function createAuth(env) {
     const token = sign({ email: user.email, name: user.name, provider: user.provider, exp: Date.now() + SESSION_MAX_AGE * 1000 });
     res.setHeader('Set-Cookie', 'ziyo_session=' + token + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + SESSION_MAX_AGE);
   }
-  function currentUser(req) {
+  async function currentUser(req) {
     const s = unsign(parseCookies(req).ziyo_session);
     if (!s || !s.email || !s.exp || s.exp < Date.now()) return null;
-    const u = loadUsers().find(x => x.email === s.email);
+    const u = await store.getUser(s.email);
     return u ? publicUser(u) : null;
   }
 
@@ -143,7 +135,7 @@ function createAuth(env) {
     res.writeHead(302, { Location: url, 'Cache-Control': 'no-store' });
     res.end();
   }
-  function finish(res, req, user) {
+  async function finish(res, req, user) {
     setSession(res, user);
     redirect(res, BASE_URL + '/?auth_ok=' + encodeURIComponent(user.provider) + '#/chat');
   }
@@ -170,25 +162,23 @@ function createAuth(env) {
   }
 
   /* ---------- password auth ---------- */
-  function register(body) {
+  async function register(body) {
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
     const name = String(body.name || '').trim().slice(0, 40);
     if (!EMAIL_RE.test(email)) return { status: 400, error: 'Enter a valid email address.' };
     if (password.length < 6) return { status: 400, error: 'Password must be at least 6 characters.' };
-    const list = loadUsers();
-    if (list.some(u => u.email === email)) return { status: 409, error: 'An account with this email already exists.' };
+    if (await store.getUser(email)) return { status: 409, error: 'An account with this email already exists.' };
     const salt = crypto.randomBytes(16).toString('hex');
     const hash = crypto.scryptSync(password, salt, 64).toString('hex');
     const user = { email, name: name || email.split('@')[0], provider: 'password', salt, hash, createdAt: Date.now() };
-    list.push(user);
-    saveUsers(list);
+    await store.putUser(user);
     return { status: 200, user: publicUser(user) };
   }
-  function login(body) {
+  async function login(body) {
     const email = String(body.email || '').trim().toLowerCase();
     const password = String(body.password || '');
-    const u = loadUsers().find(x => x.email === email);
+    const u = await store.getUser(email);
     if (!u || !u.hash) return { status: 401, error: 'Invalid email or password.' };
     const calc = crypto.scryptSync(password, u.salt, 64);
     const expected = Buffer.from(u.hash, 'hex');
@@ -312,7 +302,7 @@ function createAuth(env) {
           providerId: String(info.id || info.login),
         };
       }
-      finish(res, req, upsert(profile));
+      await finish(res, req, await upsert(profile));
     } catch (e) {
       failRedirect(res, 'Login failed: ' + (e.message || e));
     }
@@ -369,7 +359,7 @@ function createAuth(env) {
         return send(res, 400, { ok: false, error: 'Expired login state.' }, req);
       }
       const profile = await verifyGoogleIdToken(body.id_token, s.nonce);
-      const user = upsert(profile);
+      const user = await upsert(profile);
       // Clear the one-time state cookie and start the real session.
       res.setHeader('Set-Cookie', [
         'ziyo_google_state=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
@@ -382,7 +372,7 @@ function createAuth(env) {
     }
   }
 
-  function telegramCallback(req, res, url) {
+  async function telegramCallback(req, res, url) {
     if (!cfg.telegram.token) return failRedirect(res, cfgError('telegram'));
     const params = url.searchParams;
     const hash = String(params.get('hash') || '');
@@ -405,7 +395,7 @@ function createAuth(env) {
     if (!id) return failRedirect(res, 'Telegram did not return a user id.');
     const name = [params.get('first_name'), params.get('last_name')].filter(Boolean).join(' ')
       || params.get('username') || 'Telegram user';
-    finish(res, req, upsert({
+    await finish(res, req, await upsert({
       email: id + '@telegram.local',
       name: String(name).slice(0, 60),
       provider: 'telegram',
@@ -428,17 +418,24 @@ function createAuth(env) {
         },
         telegramBot: cfg.telegram.username,
         baseUrl: BASE_URL,
+        storage: store.name,
       }, req);
     }
     if (p === '/api/auth/me' && req.method === 'GET') {
-      const user = currentUser(req);
+      const user = await currentUser(req);
       return user ? send(res, 200, { ok: true, user }, req) : send(res, 401, { ok: false }, req);
     }
     if ((p === '/api/auth/register' || p === '/api/auth/login') && req.method === 'POST') {
       let body;
       try { body = await readJson(req); }
       catch (e) { return send(res, 400, { ok: false, error: 'Invalid request.' }, req); }
-      const result = p.endsWith('register') ? register(body) : login(body);
+      let result;
+      try {
+        result = p.endsWith('register') ? await register(body) : await login(body);
+      } catch (e) {
+        console.error('[auth] user storage error:', e && e.message ? e.message : e);
+        return send(res, 503, { ok: false, error: 'User storage is temporarily unavailable. Please try again.' }, req);
+      }
       if (result.error) return send(res, result.status, { ok: false, error: result.error }, req);
       setSession(res, result.user);
       return send(res, 200, { ok: true, user: result.user }, req);
@@ -452,11 +449,16 @@ function createAuth(env) {
     if (p === '/api/auth/google/callback' && req.method === 'GET') return oauthCallback(req, res, 'google', url);
     if (p === '/api/auth/github' && req.method === 'GET') return oauthStart(res, 'github');
     if (p === '/api/auth/github/callback' && req.method === 'GET') return oauthCallback(req, res, 'github', url);
-    if (p === '/api/auth/telegram' && req.method === 'GET') return telegramCallback(req, res, url);
+    if (p === '/api/auth/telegram' && req.method === 'GET') return await telegramCallback(req, res, url);
     return null;
   }
 
-  return { handle, currentUser, config: () => ({ baseUrl: BASE_URL, telegramBot: cfg.telegram.username }) };
+  return {
+    handle,
+    currentUser,
+    storage: () => store.name,
+    config: () => ({ baseUrl: BASE_URL, telegramBot: cfg.telegram.username, storage: store.name }),
+  };
 }
 
 module.exports = { createAuth };

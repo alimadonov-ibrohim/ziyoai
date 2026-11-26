@@ -58,8 +58,6 @@ const FREE_MODEL_PATTERNS = [
   /^gemini-flash-latest$/i,
 ];
 const NON_CHAT_RE = /embed|moderation|dall-?e|whisper|tts|audio|transcri|realtime|imagen|veo|aqa|codex|search|rerank|guard|instruct|babbage|davinci|computer-?use|sora|video|music|speech|image|nano-banana|omni|genie|decision|robotics|deep-research|antigravity|lyria|live/i;
-// Gemini 2.x catalog entries are still listed by the API, but new keys get 404 from them.
-const RETIRED_MODEL_RE = /^gemini-2\./i;
 
 let modelsCache = { at: 0, data: null, inflight: null };
 
@@ -133,7 +131,6 @@ async function fetchGeminiModels() {
     const methods = Array.isArray(m.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
     if (!methods.includes('generateContent')) continue;
     if (NON_CHAT_RE.test(id)) continue;
-    if (RETIRED_MODEL_RE.test(id)) continue;
     seen.add(id);
     const free = isFree(id);
     models.push({
@@ -238,7 +235,8 @@ function serveStatic(pathname, res, search) {
     return res.end();
   }
   const file = path.join(ROOT, path.normalize(rel).replace(/^([\\/])+/, ''));
-  if (!file.startsWith(ROOT)) return upstreamError(res, 403, 'Forbidden');
+  const relToRoot = path.relative(ROOT, file);
+  if (relToRoot.startsWith('..') || path.isAbsolute(relToRoot)) return upstreamError(res, 403, 'Forbidden');
   fs.readFile(file, (err, data) => {
     if (err) return upstreamError(res, 404, 'Not found: ' + rel);
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
@@ -273,6 +271,7 @@ async function handleRequest(req, res) {
         provider: 'gemini',
         base: GEMINI_BASE,
         modelsEndpoint: '/api/models',
+        userStorage: auth.storage(),
         hint: API_KEY ? 'Gemini API key loaded on server' : 'Add GEMINI_API_KEY to .env and restart',
       });
     }
